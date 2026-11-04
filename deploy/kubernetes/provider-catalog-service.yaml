@@ -1,0 +1,56 @@
+# provider-catalog-service — Deployment + Service + HPA.
+# Config arrives via environment variables (12-Factor III); secrets are referenced, never embedded.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: provider-catalog-service
+  namespace: healthcare
+  labels: { app: provider-catalog-service, app.kubernetes.io/part-of: open-healthcare-insurance }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: provider-catalog-service } }
+  template:
+    metadata:
+      labels: { app: provider-catalog-service }
+    spec:
+      containers:
+        - name: provider-catalog-service
+          image: quay.io/open-industries/provider-catalog-service:latest  # replaced by the promoted release digest
+          ports: [{ containerPort: 8084, name: http }]
+          env:
+            - { name: HTTP_PORT, value: "8084" }
+            - { name: LOG_LEVEL, value: "INFO" }
+            - name: DB_URL
+              valueFrom: { secretKeyRef: { name: provider-catalog-service-db, key: url, optional: true } }
+          resources:
+            requests: { cpu: "250m", memory: "256Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
+          livenessProbe:
+            httpGet: { path: /q/health/live, port: http }
+            initialDelaySeconds: 10
+          readinessProbe:
+            httpGet: { path: /q/health/ready, port: http }
+            initialDelaySeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: provider-catalog-service
+  namespace: healthcare
+  labels: { app: provider-catalog-service }
+spec:
+  selector: { app: provider-catalog-service }
+  ports: [{ name: http, port: 8084, targetPort: http }]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: provider-catalog-service
+  namespace: healthcare
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: provider-catalog-service }
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
